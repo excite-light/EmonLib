@@ -172,40 +172,52 @@ void EnergyMonitor::calcVI(unsigned int crossings, unsigned int timeout)
 }
 
 //--------------------------------------------------------------------------------------
-double EnergyMonitor::calcIrms(unsigned int Number_of_Samples)
-{
+double EnergyMonitor::calcIrms(unsigned int number_samples) {
+  for (unsigned int n = 1; n < number_samples; ++n) {
+    calcIrmsContinous();
+  }
+  return calcIrmsContinous();
+}
 
-  #if defined emonTxV3
-    int SupplyVoltage=3300;
-  #else
+// If we want to calculate irms, we need at least 1 period right?
+// At 50Hz we want at least what? 10 measurements per period? so
+// within 0.02s or 20ms -> we need one measurement every 2ms
+double EnergyMonitor::calcIrmsContinous() {
+
+#if defined emonTxV3
+    int SupplyVoltage = 3300;
+#else
     int SupplyVoltage = readVcc();
-  #endif
+#endif
 
-
-  for (unsigned int n = 0; n < Number_of_Samples; n++)
-  {
     sampleI = analogRead(inPinI);
 
     // Digital low pass filter extracts the 2.5 V or 1.65 V dc offset,
-    //  then subtract this - signal is now centered on 0 counts.
-    offsetI = (offsetI + (sampleI-offsetI)/1024);
+    // then subtract this - signal is now centered on 0 counts.
+    offsetI   = (offsetI + (sampleI - offsetI) / 1024);
     filteredI = sampleI - offsetI;
-
     // Root-mean-square method current
     // 1) square current values
-    sqI = filteredI * filteredI;
+    const auto sq_I = filteredI * filteredI;
     // 2) sum
-    sumI += sqI;
-  }
+    static double sum_I  = 0;
+    sum_I += sq_I;
 
-  double I_RATIO = ICAL *((SupplyVoltage/1000.0) / (ADC_COUNTS));
-  Irms = I_RATIO * sqrt(sumI / Number_of_Samples);
+    constexpr int NUM_SAMPLES = 1024;
+    static int count          = NUM_SAMPLES;
+    static double last_irms   = 0;
 
-  //Reset accumulators
-  sumI = 0;
-  //--------------------------------------------------------------------------------------
+    --count;
+    if (count <= 0) {
+        count          = NUM_SAMPLES;
+        double I_RATIO = ICAL * ((SupplyVoltage / 1000.0) / (ADC_COUNTS));
+        Irms           = I_RATIO * sqrt(sum_I / NUM_SAMPLES);
+        // Reset accumulators
+        sum_I     = 0;
+        last_irms = Irms;
+    }
 
-  return Irms;
+    return last_irms;
 }
 
 void EnergyMonitor::serialprint()
